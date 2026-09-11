@@ -1,233 +1,89 @@
-from __future__ import absolute_import
+import streamlit as st
+import streamlit.components.v1 as components
+from groq import Groq
 
-import json
-import os
-from urlparse import urlparse
+st.set_page_config(page_title="AI Assistant", page_icon="🤖", layout="centered")
 
-from flask import Flask, render_template, request, redirect, session
-from flask_sslify import SSLify
-from rauth import OAuth2Service
-import requests
+st.title("🤖 AI অ্যাসিস্ট্যান্ট")
+st.caption("আপনার যেকোনো কথা বা প্রশ্ন লিখুন, বুদ্ধিমান AI সাথে সাথে সবকিছুর উত্তর দেবে।")
 
-app = Flask(__name__, static_folder='static', static_url_path='')
-app.requests_session = requests.Session()
-app.secret_key = os.urandom(24)
+# Adsterra বিজ্ঞাপনের বাটন
+ad_link = "https://www.profitableratecpmnetwork.com/h7ssyv17p?key=eb8a14de90b0395f65ebf374d7d4ca71"
+st.markdown(
+    f"""
+    <div style="text-align: center; margin: 15px 0;">
+        <a href="{ad_link}" target="_blank" style="text-decoration: none;">
+            <button style="
+                background: linear-gradient(90deg, #ff4b4b, #ff7676);
+                color: white;
+                padding: 12px 24px;
+                border: none;
+                border-radius: 8px;
+                font-size: 16px;
+                font-weight: bold;
+                cursor: pointer;
+            ">
+                🎁 Support Us / Check Offer
+            </button>
+        </a>
+    </div>
+    """,
+    unsafe_allow_html=True
+)
 
-sslify = SSLify(app)
+# আপনার সক্রিয় Groq API Key
+GROQ_API_KEY = "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"
+client = Groq(api_key=GROQ_API_KEY)
 
-with open('config.json') as f:
-    config = json.load(f)
+if "messages" not in st.session_state:
+    st.session_state.messages = []
 
+# চ্যাট মেসেজ এবং স্পষ্ট ভয়েস বাটন
+for idx, message in enumerate(st.session_state.messages):
+    with st.chat_message(message["role"]):
+        st.markdown(message["content"])
+        if message["role"] == "assistant":
+            clean_voice = message["content"].replace('"', '').replace("'", "").replace("\n", " ")
+            if st.button("🔊 মুখে শুনুন", key=f"speak_{idx}"):
+                components.html(
+                    f"""
+                    <script>
+                        if ('speechSynthesis' in window) {{
+                            window.speechSynthesis.cancel();
+                            let msg = new SpeechSynthesisUtterance("{clean_voice}");
+                            msg.lang = 'bn-IN';
+                            msg.rate = 1.0;
+                            window.speechSynthesis.speak(msg);
+                        }}
+                    </script>
+                    """,
+                    height=0
+                )
 
-def generate_oauth_service():
-    """Prepare the OAuth2Service that is used to make requests later."""
-    return OAuth2Service(
-        client_id=os.environ.get('UBER_CLIENT_ID'),
-        client_secret=os.environ.get('UBER_CLIENT_SECRET'),
-        name=config.get('name'),
-        authorize_url=config.get('authorize_url'),
-        access_token_url=config.get('access_token_url'),
-        base_url=config.get('base_url'),
-    )
+# প্রশ্ন করার বক্স
+if prompt := st.chat_input("যেকোনো প্রশ্ন বা কথা এখানে লিখুন..."):
+    st.session_state.messages.append({"role": "user", "content": prompt})
+    with st.chat_message("user"):
+        st.markdown(prompt)
 
-
-def generate_ride_headers(token):
-    """Generate the header object that is used to make api requests."""
-    return {
-        'Authorization': 'bearer %s' % token,
-        'Content-Type': 'application/json',
-    }
-
-
-@app.route('/health', methods=['GET'])
-def health():
-    """Check the status of this application."""
-    return ';-)'
-
-
-@app.route('/', methods=['GET'])
-def signup():
-    """The first step in the three-legged OAuth handshake.
-
-    You should navigate here first. It will redirect to login.uber.com.
-    """
-    params = {
-        'response_type': 'code',
-        'redirect_uri': get_redirect_uri(request),
-        'scopes': ','.join(config.get('scopes')),
-    }
-    url = generate_oauth_service().get_authorize_url(**params)
-    return redirect(url)
-
-
-@app.route('/submit', methods=['GET'])
-def submit():
-    """The other two steps in the three-legged Oauth handshake.
-
-    Your redirect uri will redirect you here, where you will exchange
-    a code that can be used to obtain an access token for the logged-in use.
-    """
-    params = {
-        'redirect_uri': get_redirect_uri(request),
-        'code': request.args.get('code'),
-        'grant_type': 'authorization_code'
-    }
-    response = app.requests_session.post(
-        config.get('access_token_url'),
-        auth=(
-            os.environ.get('UBER_CLIENT_ID'),
-            os.environ.get('UBER_CLIENT_SECRET')
-        ),
-        data=params,
-    )
-    session['access_token'] = response.json().get('access_token')
-
-    return render_template(
-        'success.html',
-        token=response.json().get('access_token')
-    )
-
-
-@app.route('/demo', methods=['GET'])
-def demo():
-    """Demo.html is a template that calls the other routes in this example."""
-    return render_template('demo.html', token=session.get('access_token'))
-
-
-@app.route('/products', methods=['GET'])
-def products():
-    """Example call to the products endpoint.
-
-    Returns all the products currently available in San Francisco.
-    """
-    url = config.get('base_uber_url') + 'products'
-    params = {
-        'latitude': config.get('start_latitude'),
-        'longitude': config.get('start_longitude'),
-    }
-
-    response = app.requests_session.get(
-        url,
-        headers=generate_ride_headers(session.get('access_token')),
-        params=params,
-    )
-
-    if response.status_code != 200:
-        return 'There was an error', response.status_code
-    return render_template(
-        'results.html',
-        endpoint='products',
-        data=response.text,
-    )
-
-
-@app.route('/time', methods=['GET'])
-def time():
-    """Example call to the time estimates endpoint.
-
-    Returns the time estimates from the given lat/lng given below.
-    """
-    url = config.get('base_uber_url') + 'estimates/time'
-    params = {
-        'start_latitude': config.get('start_latitude'),
-        'start_longitude': config.get('start_longitude'),
-    }
-
-    response = app.requests_session.get(
-        url,
-        headers=generate_ride_headers(session.get('access_token')),
-        params=params,
-    )
-
-    if response.status_code != 200:
-        return 'There was an error', response.status_code
-    return render_template(
-        'results.html',
-        endpoint='time',
-        data=response.text,
-    )
-
-
-@app.route('/price', methods=['GET'])
-def price():
-    """Example call to the price estimates endpoint.
-
-    Returns the time estimates from the given lat/lng given below.
-    """
-    url = config.get('base_uber_url') + 'estimates/price'
-    params = {
-        'start_latitude': config.get('start_latitude'),
-        'start_longitude': config.get('start_longitude'),
-        'end_latitude': config.get('end_latitude'),
-        'end_longitude': config.get('end_longitude'),
-    }
-
-    response = app.requests_session.get(
-        url,
-        headers=generate_ride_headers(session.get('access_token')),
-        params=params,
-    )
-
-    if response.status_code != 200:
-        return 'There was an error', response.status_code
-    return render_template(
-        'results.html',
-        endpoint='price',
-        data=response.text,
-    )
-
-
-@app.route('/history', methods=['GET'])
-def history():
-    """Return the last 5 trips made by the logged in user."""
-    url = config.get('base_uber_url_v1_1') + 'history'
-    params = {
-        'offset': 0,
-        'limit': 5,
-    }
-
-    response = app.requests_session.get(
-        url,
-        headers=generate_ride_headers(session.get('access_token')),
-        params=params,
-    )
-
-    if response.status_code != 200:
-        return 'There was an error', response.status_code
-    return render_template(
-        'results.html',
-        endpoint='history',
-        data=response.text,
-    )
-
-
-@app.route('/me', methods=['GET'])
-def me():
-    """Return user information including name, picture and email."""
-    url = config.get('base_uber_url') + 'me'
-    response = app.requests_session.get(
-        url,
-        headers=generate_ride_headers(session.get('access_token')),
-    )
-
-    if response.status_code != 200:
-        return 'There was an error', response.status_code
-    return render_template(
-        'results.html',
-        endpoint='me',
-        data=response.text,
-    )
-
-
-def get_redirect_uri(request):
-    """Return OAuth redirect URI."""
-    parsed_url = urlparse(request.url)
-    if parsed_url.hostname == 'localhost':
-        return 'http://{hostname}:{port}/submit'.format(
-            hostname=parsed_url.hostname, port=parsed_url.port
-        )
-    return 'https://{hostname}/submit'.format(hostname=parsed_url.hostname)
-
-if __name__ == '__main__':
-    app.debug = os.environ.get('FLASK_DEBUG', True)
-    app.run(port=7000)
+    with st.chat_message("assistant"):
+        with st.spinner("ভেবে উত্তর তৈরি করছি..."):
+            try:
+                system_prompt = (
+                    "You are a universally intelligent, polite, and helpful AI assistant. "
+                    "You know your creator is Saheb. Greet Saheb with respect and warmth. "
+                    "Answer any question thoroughly, accurately, and naturally in Bengali on all topics."
+                )
+                chat_completion = client.chat.completions.create(
+                    messages=[
+                        {"role": "system", "content": system_prompt},
+                        *[{"role": m["role"], "content": m["content"]} for m in st.session_state.messages]
+                    ],
+                    model="llama-3.3-70b-versatile",
+                )
+                response_text = chat_completion.choices[0].message.content
+                st.markdown(response_text)
+                st.session_state.messages.append({"role": "assistant", "content": response_text})
+                st.rerun()
+            except Exception as e:
+                st.error(f"ত্রুটি: {e}")
